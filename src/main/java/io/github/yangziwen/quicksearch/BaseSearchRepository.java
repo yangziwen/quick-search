@@ -8,11 +8,15 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 import javax.persistence.PersistenceException;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.elasticsearch.action.DocWriteResponse.Result;
+import org.elasticsearch.action.bulk.BulkItemResponse;
+import org.elasticsearch.action.bulk.BulkRequest;
+import org.elasticsearch.action.bulk.BulkResponse;
 import org.elasticsearch.action.delete.DeleteRequest;
 import org.elasticsearch.action.delete.DeleteResponse;
 import org.elasticsearch.action.get.GetRequest;
@@ -127,30 +131,12 @@ public abstract class BaseSearchRepository<E> implements BaseReadOnlyRepository<
 
         Map<String, Object> beanMap = createBeanMap(entity);
 
-        Map<String, Object> entityMap = new HashMap<>();
-
-        for (Field field : entityMeta.getFieldsWithoutIdField()) {
-            entityMap.put(field.getName(), beanMap.get(field.getName()));
-        }
-
-        IndexRequest request = new IndexRequest(entityMeta.getTable());
-
-        Field idField = entityMeta.getIdField();
-
-        if (idField != null && entityMeta.getIdGeneratedValue() == null) {
-            Object idVal = beanMap.get(entityMeta.getIdField().getName());
-            if (idVal == null) {
-                throw new IllegalStateException("failed to get id of entity[" + entity + "]");
-            }
-            request.id(String.valueOf(idVal));
-        }
-
-        request.source(entityMap);
+        IndexRequest request = generateIndexRequest(beanMap);
 
         try {
             IndexResponse response = client.index(request, options);
-            if (idField != null) {
-                beanMap.put(idField.getName(), response.getId());
+            if (entityMeta.getIdField() != null && entityMeta.getIdGeneratedValue() != null) {
+                beanMap.put(entityMeta.getIdFieldName(), response.getId());
             }
             return response.getResult() == Result.CREATED ? 1 : 0;
         } catch (IOException e) {
@@ -159,7 +145,57 @@ public abstract class BaseSearchRepository<E> implements BaseReadOnlyRepository<
     }
 
     public int batchInsert(List<E> entities, int batchSize) {
-        return 0;
+
+        if (CollectionUtils.isEmpty(entities)) {
+            return 0;
+        }
+
+        for (int i = 0; i < entities.size(); i += batchSize) {
+            List<E> sublist = entities.subList(i, Math.min(i + batchSize, entities.size()));
+            List<BeanMap> beanMapList = sublist.stream()
+                    .map(BeanMap::create)
+                    .collect(Collectors.toList());
+            BulkRequest request = new BulkRequest();
+            for (BeanMap beanMap : beanMapList) {
+                request.add(generateIndexRequest(beanMap));
+            }
+            try {
+                BulkResponse response = client.bulk(request, options);
+                if (entityMeta.getIdField() != null && entityMeta.getIdGeneratedValue() != null) {
+                    for (int j = 0; j < response.getItems().length; j++) {
+                        String idVal = response.getItems()[j].getId();
+                        beanMapList.get(j).put(entityMeta.getIdFieldName(), idVal);
+                    }
+                }
+            } catch (IOException e) {
+                throw new PersistenceException("faield to persist entities of type " + entityMeta.getClassType().getName(), e);
+            }
+        }
+
+        return entities.size();
+    }
+
+    private IndexRequest generateIndexRequest(Map<String, Object> beanMap) {
+
+        Map<String, Object> entityMap = new HashMap<>();
+
+        for (Field field : entityMeta.getFieldsWithoutIdField()) {
+            entityMap.put(field.getName(), beanMap.get(field.getName()));
+        }
+
+        IndexRequest request = new IndexRequest(entityMeta.getTable());
+
+        if (entityMeta.getIdField() != null && entityMeta.getIdGeneratedValue() == null) {
+            Object idVal = beanMap.get(entityMeta.getIdField().getName());
+            if (idVal == null) {
+                throw new IllegalStateException("failed to get id of entity[" + beanMap + "]");
+            }
+            request.id(String.valueOf(idVal));
+        }
+
+        request.source(entityMap);
+
+        return request;
     }
 
     public int update(E entity) {
@@ -172,7 +208,7 @@ public abstract class BaseSearchRepository<E> implements BaseReadOnlyRepository<
             entityMap.put(field.getName(), beanMap.get(field.getName()));
         }
 
-        Object idVal = beanMap.get(entityMeta.getIdField().getName());
+        Object idVal = beanMap.get(entityMeta.getIdFieldName());
 
         UpdateRequest request = new UpdateRequest(entityMeta.getTable(), String.valueOf(idVal));
 
@@ -200,7 +236,7 @@ public abstract class BaseSearchRepository<E> implements BaseReadOnlyRepository<
             entityMap.put(field.getName(), value);
         }
 
-        Object idVal = beanMap.get(entityMeta.getIdField().getName());
+        Object idVal = beanMap.get(entityMeta.getIdFieldName());
 
         UpdateRequest request = new UpdateRequest(entityMeta.getTable(), String.valueOf(idVal));
 
