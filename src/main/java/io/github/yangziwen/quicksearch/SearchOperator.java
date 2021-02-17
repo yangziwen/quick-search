@@ -1,5 +1,7 @@
 package io.github.yangziwen.quicksearch;
 
+import java.util.Collection;
+import java.util.Collections;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
@@ -22,7 +24,7 @@ public enum SearchOperator {
     ne {
         @Override
         public QueryBuilder generateQueryBuilder(Criterion<?> criterion) {
-            return QueryBuilders.boolQuery().mustNot(QueryBuilders.termQuery(criterion.getQueryName(), criterion.getValue()));
+            return QueryBuilders.boolQuery().mustNot(eq.generateQueryBuilder(criterion));
         }
     },
 
@@ -57,82 +59,87 @@ public enum SearchOperator {
     contain {
         @Override
         public QueryBuilder generateQueryBuilder(Criterion<?> criterion) {
-            return null;
+            String suffix = String.valueOf(criterion.getValue()).replaceAll(REGEX_ESCAPE_PATTERN, "\\\\$1");
+            return QueryBuilders.regexpQuery(criterion.getQueryName(), ".*" + suffix + ".*");
         }
     },
 
     not_contain {
         @Override
         public QueryBuilder generateQueryBuilder(Criterion<?> criterion) {
-            return null;
+            return QueryBuilders.boolQuery().mustNot(contain.generateQueryBuilder(criterion));
         }
     },
 
     start_with {
         @Override
         public QueryBuilder generateQueryBuilder(Criterion<?> criterion) {
-            return null;
+            return QueryBuilders.prefixQuery(criterion.getQueryName(), String.valueOf(criterion.getValue()));
         }
     },
 
     not_start_with {
         @Override
         public QueryBuilder generateQueryBuilder(Criterion<?> criterion) {
-            return null;
+            return QueryBuilders.boolQuery().mustNot(start_with.generateQueryBuilder(criterion));
         }
     },
 
     end_with {
         @Override
         public QueryBuilder generateQueryBuilder(Criterion<?> criterion) {
-            return null;
+            String suffix = String.valueOf(criterion.getValue()).replaceAll(REGEX_ESCAPE_PATTERN, "\\\\$1");
+            return QueryBuilders.regexpQuery(criterion.getQueryName(), ".*" + suffix);
         }
     },
 
     not_end_with {
         @Override
         public QueryBuilder generateQueryBuilder(Criterion<?> criterion) {
-            return null;
+            return QueryBuilders.boolQuery().mustNot(SearchOperator.end_with.generateQueryBuilder(criterion));
         }
     },
 
     in {
         @Override
         public QueryBuilder generateQueryBuilder(Criterion<?> criterion) {
-            return null;
+            Collection<?> values = Collections.singletonList(criterion);
+            if (criterion.getValue() instanceof Collection) {
+                values = Collection.class.cast(criterion.getValue());
+            }
+            return QueryBuilders.termsQuery(criterion.getQueryName(), values);
         }
     },
 
     not_in {
         @Override
         public QueryBuilder generateQueryBuilder(Criterion<?> criterion) {
-            return null;
+            return QueryBuilders.boolQuery().mustNot(in.generateQueryBuilder(criterion));
         }
     },
 
     is_null {
         @Override
         public QueryBuilder generateQueryBuilder(Criterion<?> criterion) {
-            return null;
+            return QueryBuilders.boolQuery().mustNot(is_not_null.generateQueryBuilder(criterion));
         }
     },
 
     is_not_null {
         @Override
         public QueryBuilder generateQueryBuilder(Criterion<?> criterion) {
-            // TODO Auto-generated method stub
-            return null;
+            return QueryBuilders.existsQuery(criterion.getQueryName());
         }
     },
 
     impossible {
         @Override
         public QueryBuilder generateQueryBuilder(Criterion<?> criterion) {
-            // TODO Auto-generated method stub
             return null;
         }
     };
 
+    private static final String REGEX_ESCAPE_PATTERN = "(\\*|\\.|\\?|\\+|\\$|\\^|\\[|\\]|\\(|\\)|\\{|\\}|\\||\\/|\\\\)";
 
     private static final ConcurrentMap<Operator, SearchOperator> OPERATOR_MAPPING = new ConcurrentHashMap<Operator, SearchOperator>() {
         private static final long serialVersionUID = 1L;
