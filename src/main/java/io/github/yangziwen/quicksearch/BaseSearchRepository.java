@@ -8,6 +8,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.stream.Collectors;
 
 import javax.persistence.PersistenceException;
@@ -27,16 +28,33 @@ import org.elasticsearch.action.get.MultiGetRequest.Item;
 import org.elasticsearch.action.get.MultiGetResponse;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.index.IndexResponse;
+import org.elasticsearch.action.search.SearchRequest;
+import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.update.UpdateRequest;
 import org.elasticsearch.action.update.UpdateResponse;
 import org.elasticsearch.client.RequestOptions;
 import org.elasticsearch.client.RestHighLevelClient;
+import org.elasticsearch.client.core.CountRequest;
+import org.elasticsearch.client.core.CountResponse;
+import org.elasticsearch.index.query.BoolQueryBuilder;
+import org.elasticsearch.index.query.QueryBuilder;
+import org.elasticsearch.index.query.QueryBuilders;
+import org.elasticsearch.search.SearchHit;
+import org.elasticsearch.search.builder.SearchSourceBuilder;
+import org.elasticsearch.search.sort.SortBuilder;
+import org.elasticsearch.search.sort.SortBuilders;
+import org.elasticsearch.search.sort.SortOrder;
 
 import com.alibaba.fastjson.JSON;
 
 import io.github.yangziwen.quickdao.core.BaseReadOnlyRepository;
+import io.github.yangziwen.quickdao.core.Criteria;
+import io.github.yangziwen.quickdao.core.Criterion;
 import io.github.yangziwen.quickdao.core.EntityMeta;
+import io.github.yangziwen.quickdao.core.Order;
+import io.github.yangziwen.quickdao.core.Order.Direction;
 import io.github.yangziwen.quickdao.core.Query;
+import io.github.yangziwen.quickdao.core.RepoKeys;
 import io.github.yangziwen.quickdao.core.TypedCriteria;
 import io.github.yangziwen.quickdao.core.TypedQuery;
 import io.github.yangziwen.quickdao.core.util.ReflectionUtil;
@@ -85,7 +103,6 @@ public abstract class BaseSearchRepository<E> implements BaseReadOnlyRepository<
             MultiGetResponse response = client.mget(request, options);
             for (MultiGetItemResponse item : response.getResponses()) {
                 entities.add(extractEntityFromGetResponse(item.getResponse()));
-
             }
             return entities;
         } catch (IOException e) {
@@ -108,12 +125,75 @@ public abstract class BaseSearchRepository<E> implements BaseReadOnlyRepository<
 
     @Override
     public List<E> list(Query query) {
-        return null;
+        SearchSourceBuilder sourceBuilder = new SearchSourceBuilder()
+                .query(generateQueryBuilder(query.getCriteria()))
+                .from(query.getOffset())
+                .size(Math.min(query.getLimit(), getDefaultMaxSize()));
+        for (Order order : query.getOrderList()) {
+            sourceBuilder.sort(generateSortBuilder(order));
+        }
+        SearchRequest request = new SearchRequest(entityMeta.getTable());
+        request.source(sourceBuilder);
+        try {
+            List<E> entities = new ArrayList<>();
+            SearchResponse response = client.search(request, options);
+            for (SearchHit hit : response.getHits().getHits()) {
+                E entity = JSON.parseObject(hit.getSourceAsString(), entityMeta.getClassType());
+                Field idField = entityMeta.getIdField();
+                if (idField != null) {
+                    BeanMap.create(entity).put(idField.getName(), hit.getId());
+                }
+                entities.add(entity);
+            }
+            return entities;
+        } catch (IOException e) {
+            throw new RuntimeException("failed to list entity of type " + entityMeta.getClassType().getName() + " by " + query, e);
+        }
     }
 
     @Override
     public Integer count(Query query) {
-        return null;
+        SearchSourceBuilder sourceBuilder = new SearchSourceBuilder()
+                .query(generateQueryBuilder(query.getCriteria()));
+        CountRequest request = new CountRequest(entityMeta.getTable());
+        request.source(sourceBuilder);
+        try {
+            CountResponse response = client.count(request, options);
+            return Long.valueOf(response.getCount()).intValue();
+        } catch (IOException e) {
+            throw new RuntimeException("failed to count entity of type " + entityMeta.getClassType().getName() + " by " + query, e);
+        }
+    }
+
+    private SortBuilder<?> generateSortBuilder(Order order) {
+        SortOrder sortOrder = SortOrder.ASC;
+        if (order.getDirection() == Direction.DESC) {
+            sortOrder = SortOrder.DESC;
+        }
+        return SortBuilders.fieldSort(order.getName()).order(sortOrder);
+    }
+
+    private QueryBuilder generateQueryBuilder(Criteria criteria) {
+        if (criteria.isEmpty()) {
+            return QueryBuilders.matchAllQuery();
+        }
+        BoolQueryBuilder boolQueryBuilder = QueryBuilders.boolQuery();
+        for (Criterion<?> criterion : criteria.getCriterionList()) {
+            SearchOperator operator = SearchOperator.from(criterion.getOperator());
+            if (operator == null) {
+                continue;
+            }
+            boolQueryBuilder.must(operator.generateQueryBuilder(criterion));
+        }
+        for (Entry<String, Criteria> entry : criteria.getNestedCriteriaMap().entrySet()) {
+            if (entry.getKey().endsWith(RepoKeys.AND)) {
+                boolQueryBuilder.must(generateQueryBuilder(entry.getValue()));
+            }
+            if (entry.getKey().endsWith(RepoKeys.OR)) {
+                boolQueryBuilder.should(generateQueryBuilder(entry.getValue()));
+            }
+        }
+        return boolQueryBuilder;
     }
 
     @Override
@@ -295,6 +375,10 @@ public abstract class BaseSearchRepository<E> implements BaseReadOnlyRepository<
             return Collections.emptyMap();
         }
         return BeanMap.create(entity);
+    }
+
+    protected int getDefaultMaxSize() {
+        return 10000;
     }
 
 }
