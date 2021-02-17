@@ -35,7 +35,6 @@ import org.elasticsearch.client.RestHighLevelClient;
 import com.alibaba.fastjson.JSON;
 
 import io.github.yangziwen.quickdao.core.BaseReadOnlyRepository;
-import io.github.yangziwen.quickdao.core.Criteria;
 import io.github.yangziwen.quickdao.core.EntityMeta;
 import io.github.yangziwen.quickdao.core.Query;
 import io.github.yangziwen.quickdao.core.TypedCriteria;
@@ -265,6 +264,28 @@ public abstract class BaseSearchRepository<E> implements BaseReadOnlyRepository<
             return response.getResult() == Result.DELETED ? 1 : 0;
         } catch (IOException e) {
             throw new PersistenceException("faield to delete entity of type " + entityMeta.getClassType().getName(), e);
+        }
+    }
+
+    public int deleteByIds(Collection<?> ids) {
+        if (CollectionUtils.isEmpty(ids)) {
+            return 0;
+        }
+        BulkRequest request = new BulkRequest();
+        for (Object id : ids) {
+            request.add(new DeleteRequest(entityMeta.getTable(), String.valueOf(id)));
+        }
+        try {
+            int result = ids.size();
+            BulkResponse response = client.bulk(request, options);
+            for (BulkItemResponse item : response.getItems()) {
+                if (item.isFailed()) {
+                    result --;
+                }
+            }
+            return result;
+        } catch (IOException e) {
+            throw new PersistenceException("faield to delete entities of type " + entityMeta.getClassType().getName(), e);
         }
     }
 
