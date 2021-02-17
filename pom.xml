@@ -15,10 +15,13 @@
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		<maven.compiler.target>1.8</maven.compiler.target>
 		<maven.compiler.source>1.8</maven.compiler.source>
-		<elasticsearch.client.version>7.2.0</elasticsearch.client.version>
+		<elasticsearch.client.version>7.2.1</elasticsearch.client.version>
+		<fastjson.version>1.2.73</fastjson.version>
 		<javax.persistence.version>1.0.2</javax.persistence.version>
 		<commons.lang3.version>3.3.2</commons.lang3.version>
 		<commons.collections4.version>4.1</commons.collections4.version>
+		<commons.io.version>2.7</commons.io.version>
+		<quickdao.version>0.0.20</quickdao.version>
 		<cglib.version>3.1</cglib.version>
 		<lombok.version>1.18.2</lombok.version>
 		<junit.version>4.13.1</junit.version>
@@ -31,6 +34,11 @@
 			<version>${javax.persistence.version}</version>
 		</dependency>
 		<dependency>
+			<groupId>com.alibaba</groupId>
+			<artifactId>fastjson</artifactId>
+			<version>1.2.73</version>
+		</dependency>
+		<dependency>
 			<groupId>org.apache.commons</groupId>
 			<artifactId>commons-lang3</artifactId>
 			<version>${commons.lang3.version}</version>
@@ -39,6 +47,11 @@
 			<groupId>org.apache.commons</groupId>
 			<artifactId>commons-collections4</artifactId>
 			<version>${commons.collections4.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>commons-io</groupId>
+			<artifactId>commons-io</artifactId>
+			<version>${commons.io.version}</version>
 		</dependency>
 		<dependency>
 			<groupId>org.projectlombok</groupId>
@@ -52,8 +65,13 @@
 		</dependency>
 		<dependency>
 			<groupId>org.elasticsearch.client</groupId>
-			<artifactId>elasticsearch-rest-client</artifactId>
+			<artifactId>elasticsearch-rest-high-level-client</artifactId>
 			<version>${elasticsearch.client.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>io.github.yangziwen</groupId>
+			<artifactId>quick-dao-core</artifactId>
+			<version>${quickdao.version}</version>
 		</dependency>
 		<dependency>
 			<groupId>junit</groupId>
