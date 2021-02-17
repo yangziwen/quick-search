@@ -2,6 +2,7 @@ package io.github.yangziwen.quicksearch;
 
 import java.io.IOException;
 import java.lang.reflect.Field;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -16,6 +17,10 @@ import org.elasticsearch.action.delete.DeleteRequest;
 import org.elasticsearch.action.delete.DeleteResponse;
 import org.elasticsearch.action.get.GetRequest;
 import org.elasticsearch.action.get.GetResponse;
+import org.elasticsearch.action.get.MultiGetItemResponse;
+import org.elasticsearch.action.get.MultiGetRequest;
+import org.elasticsearch.action.get.MultiGetRequest.Item;
+import org.elasticsearch.action.get.MultiGetResponse;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.index.IndexResponse;
 import org.elasticsearch.action.update.UpdateRequest;
@@ -57,20 +62,10 @@ public abstract class BaseSearchRepository<E> implements BaseReadOnlyRepository<
         try {
             GetRequest request = new GetRequest(entityMeta.getTable(), String.valueOf(id));
             GetResponse response = client.get(request, options);
-            E entity = JSON.parseObject(response.getSourceAsString(), entityMeta.getClassType());
-            Field idField = entityMeta.getIdField();
-            if (idField != null) {
-                BeanMap.create(entity).put(idField.getName(), response.getId());
-            }
-            return entity;
+            return extractEntityFromGetResponse(response);
         } catch (IOException e) {
             throw new RuntimeException("failed to query entity of type " + entityMeta.getClassType().getName() + " by id " + id, e);
         }
-    }
-
-    @Override
-    public List<E> list(Query query) {
-        return null;
     }
 
     @Override
@@ -78,7 +73,39 @@ public abstract class BaseSearchRepository<E> implements BaseReadOnlyRepository<
         if (CollectionUtils.isEmpty(ids)) {
             return Collections.emptyList();
         }
-        return list(new Criteria().and(entityMeta.getIdFieldName()).in(ids));
+        MultiGetRequest request = new MultiGetRequest();
+        for (Object id : ids) {
+            request.add(new Item(entityMeta.getTable(), String.valueOf(id)));
+        }
+        try {
+            List<E> entities = new ArrayList<>(ids.size());
+            MultiGetResponse response = client.mget(request, options);
+            for (MultiGetItemResponse item : response.getResponses()) {
+                entities.add(extractEntityFromGetResponse(item.getResponse()));
+
+            }
+            return entities;
+        } catch (IOException e) {
+            throw new RuntimeException("failed to query entity of type " + entityMeta.getClassType().getName() + " by ids " + ids, e);
+        }
+
+    }
+
+    private E extractEntityFromGetResponse(GetResponse response) {
+        if (!response.isExists()) {
+            return null;
+        }
+        E entity = JSON.parseObject(response.getSourceAsString(), entityMeta.getClassType());
+        Field idField = entityMeta.getIdField();
+        if (idField != null) {
+            BeanMap.create(entity).put(idField.getName(), response.getId());
+        }
+        return entity;
+    }
+
+    @Override
+    public List<E> list(Query query) {
+        return null;
     }
 
     @Override
@@ -131,6 +158,10 @@ public abstract class BaseSearchRepository<E> implements BaseReadOnlyRepository<
         }
     }
 
+    public int batchInsert(List<E> entities, int batchSize) {
+        return 0;
+    }
+
     public int update(E entity) {
 
         Map<String, Object> beanMap = createBeanMap(entity);
@@ -153,6 +184,35 @@ public abstract class BaseSearchRepository<E> implements BaseReadOnlyRepository<
         } catch (IOException e) {
             throw new PersistenceException("faield to update entity of type " + entityMeta.getClassType().getName(), e);
         }
+    }
+
+    public int updateSelective(E entity) {
+
+        Map<String, Object> beanMap = createBeanMap(entity);
+
+        Map<String, Object> entityMap = new HashMap<>();
+
+        for (Field field : entityMeta.getFieldsWithoutIdField()) {
+            Object value = beanMap.get(field.getName());
+            if (value == null) {
+                continue;
+            }
+            entityMap.put(field.getName(), value);
+        }
+
+        Object idVal = beanMap.get(entityMeta.getIdField().getName());
+
+        UpdateRequest request = new UpdateRequest(entityMeta.getTable(), String.valueOf(idVal));
+
+        request.doc(entityMap);
+
+        try {
+            UpdateResponse response = client.update(request, options);
+            return response.getResult() == Result.UPDATED ? 1 : 0;
+        } catch (IOException e) {
+            throw new PersistenceException("faield to update entity of type " + entityMeta.getClassType().getName(), e);
+        }
+
     }
 
     public int deleteById(Object id) {
