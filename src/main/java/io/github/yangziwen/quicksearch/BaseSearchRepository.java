@@ -15,6 +15,7 @@ import java.util.stream.Collectors;
 import javax.persistence.PersistenceException;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.collections4.MapUtils;
 import org.apache.commons.lang3.ArrayUtils;
 import org.elasticsearch.action.DocWriteResponse.Result;
 import org.elasticsearch.action.bulk.BulkItemResponse;
@@ -44,8 +45,14 @@ import org.elasticsearch.index.query.QueryBuilders;
 import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.search.aggregations.Aggregation;
 import org.elasticsearch.search.aggregations.AggregationBuilder;
+import org.elasticsearch.search.aggregations.AggregationBuilders;
 import org.elasticsearch.search.aggregations.Aggregations;
+import org.elasticsearch.search.aggregations.BucketOrder;
+import org.elasticsearch.search.aggregations.bucket.terms.ParsedTerms;
+import org.elasticsearch.search.aggregations.bucket.terms.Terms;
+import org.elasticsearch.search.aggregations.bucket.terms.TermsAggregationBuilder;
 import org.elasticsearch.search.aggregations.metrics.NumericMetricsAggregation;
+import org.elasticsearch.search.aggregations.metrics.NumericMetricsAggregation.SingleValue;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.elasticsearch.search.sort.SortBuilder;
 import org.elasticsearch.search.sort.SortBuilders;
@@ -142,7 +149,7 @@ public abstract class BaseSearchRepository<E> implements BaseReadOnlyRepository<
         else if (!hasGroupBy && hasFuncStmt) {
             return doListAggs(query);
         }
-        else if (hasGroupBy && hasFuncStmt) {
+        else if (hasGroupBy) {
             return doListBucketAggs(query);
         }
         else {
@@ -182,7 +189,103 @@ public abstract class BaseSearchRepository<E> implements BaseReadOnlyRepository<
     }
 
     private List<E> doListBucketAggs(Query query) {
-        return Collections.emptyList();
+
+        SearchSourceBuilder sourceBuilder = new SearchSourceBuilder()
+                .query(generateQueryBuilder(query.getCriteria()))
+                .from(0)
+                .size(0);
+
+        List<FunctionStmt<?>> funcStmtList = query.getSelectStmtList().stream()
+                .filter(FunctionStmt.class::isInstance)
+                .map(FunctionStmt.class::cast)
+                .collect(Collectors.toList());
+
+        AggregationBuilder outterAggsBuilder = null;
+        AggregationBuilder innerAggsBuilder = null;
+        Map<String, TermsAggregationBuilder> termsAggsBuilderMap = new HashMap<>();
+        for (String groupBy : query.getGroupByList()) {
+            TermsAggregationBuilder aggsBuilder = AggregationBuilders.terms(groupBy.replaceFirst("\\.keyword$", "")).field(groupBy);
+            termsAggsBuilderMap.put(groupBy, aggsBuilder);
+            if (outterAggsBuilder == null) {
+                outterAggsBuilder = aggsBuilder;
+            }
+            if (innerAggsBuilder != null) {
+                innerAggsBuilder.subAggregation(aggsBuilder);
+            }
+            innerAggsBuilder = aggsBuilder;
+        }
+
+        List<AggregationBuilder> statsAggsBuilderList = funcStmtList.stream()
+                .map(SearchFunctionEnum::generateAggsBuilder)
+                .collect(Collectors.toList());
+        for (AggregationBuilder statsAggs : statsAggsBuilderList) {
+            innerAggsBuilder.subAggregation(statsAggs);
+        }
+
+        if (CollectionUtils.isNotEmpty(query.getOrderList())) {
+            for (Order order : query.getOrderList()) {
+                TermsAggregationBuilder termsAggsBuilder = termsAggsBuilderMap.get(order.getName());
+                if (termsAggsBuilder != null) {
+                    termsAggsBuilder.order(BucketOrder.key(order.getDirection() == Direction.ASC));
+                }
+            }
+        }
+
+        sourceBuilder.aggregation(outterAggsBuilder);
+
+        SearchRequest request = new SearchRequest(entityMeta.getTable());
+
+        request.source(sourceBuilder);
+
+        try {
+            SearchResponse response = client.search(request, options);
+            List<Map<String, Object>> resultList = walkAggregations(response.getAggregations());
+            List<E> entities = new ArrayList<>(resultList.size());
+            for (Map<String, Object> result : resultList) {
+                entities.add(JSON.parseObject(JSON.toJSONString(result), entityMeta.getClassType()));
+            }
+            return entities;
+        } catch (IOException e) {
+            throw new RuntimeException("failed to list aggregation of type " + entityMeta.getClassType().getName() + " by " + query, e);
+        }
+    }
+
+    private List<Map<String, Object>> walkAggregations(Aggregations aggregations) {
+        if (aggregations == null) {
+            return Collections.emptyList();
+        }
+        List<Aggregation> aggregationList = aggregations.asList();
+        List<Map<String, Object>> resultList = new ArrayList<>();
+        for (Aggregation aggregation : aggregationList) {
+            if (aggregation instanceof ParsedTerms) {
+                String key = aggregation.getName();
+                List<? extends Terms.Bucket> bucketList = ParsedTerms.class.cast(aggregation).getBuckets();
+                for (Terms.Bucket bucket : bucketList) {
+                    Object value = bucket.getKey();
+                    List<Map<String, Object>> mapList = walkAggregations(bucket.getAggregations());
+                    for (Map<String, Object> map : mapList) {
+                        map.put(key, value);
+                        map.putIfAbsent("count", bucket.getDocCount());
+                    }
+                    resultList.addAll(mapList);
+                }
+            } else {
+                break;
+            }
+        }
+        Map<String, Object> result = new HashMap<>();
+        for (Aggregation aggregation : aggregationList) {
+            if (aggregation instanceof NumericMetricsAggregation.SingleValue) {
+                SingleValue valueObj = NumericMetricsAggregation.SingleValue.class.cast(aggregation);
+                result.put(valueObj.getName(), valueObj.value());
+            } else {
+                break;
+            }
+        }
+        if (MapUtils.isNotEmpty(result)) {
+            resultList.add(result);
+        }
+        return resultList;
     }
 
     private List<E> doListQuery(Query query) {
