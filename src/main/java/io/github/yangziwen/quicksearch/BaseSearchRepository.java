@@ -9,11 +9,13 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 import javax.persistence.PersistenceException;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.lang3.ArrayUtils;
 import org.elasticsearch.action.DocWriteResponse.Result;
 import org.elasticsearch.action.bulk.BulkItemResponse;
 import org.elasticsearch.action.bulk.BulkRequest;
@@ -40,6 +42,10 @@ import org.elasticsearch.index.query.BoolQueryBuilder;
 import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.index.query.QueryBuilders;
 import org.elasticsearch.search.SearchHit;
+import org.elasticsearch.search.aggregations.Aggregation;
+import org.elasticsearch.search.aggregations.AggregationBuilder;
+import org.elasticsearch.search.aggregations.Aggregations;
+import org.elasticsearch.search.aggregations.metrics.NumericMetricsAggregation;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.elasticsearch.search.sort.SortBuilder;
 import org.elasticsearch.search.sort.SortBuilders;
@@ -51,10 +57,12 @@ import io.github.yangziwen.quickdao.core.BaseReadOnlyRepository;
 import io.github.yangziwen.quickdao.core.Criteria;
 import io.github.yangziwen.quickdao.core.Criterion;
 import io.github.yangziwen.quickdao.core.EntityMeta;
+import io.github.yangziwen.quickdao.core.FunctionStmt;
 import io.github.yangziwen.quickdao.core.Order;
 import io.github.yangziwen.quickdao.core.Order.Direction;
 import io.github.yangziwen.quickdao.core.Query;
 import io.github.yangziwen.quickdao.core.RepoKeys;
+import io.github.yangziwen.quickdao.core.Stmt;
 import io.github.yangziwen.quickdao.core.TypedCriteria;
 import io.github.yangziwen.quickdao.core.TypedQuery;
 import io.github.yangziwen.quickdao.core.util.ReflectionUtil;
@@ -125,12 +133,77 @@ public abstract class BaseSearchRepository<E> implements BaseReadOnlyRepository<
 
     @Override
     public List<E> list(Query query) {
+        boolean hasGroupBy = CollectionUtils.isNotEmpty(query.getGroupByList());
+        boolean hasFuncStmt = query.getSelectStmtList().stream()
+                .anyMatch(FunctionStmt.class::isInstance);
+        if (!hasGroupBy && !hasFuncStmt) {
+            return doListQuery(query);
+        }
+        else if (!hasGroupBy && hasFuncStmt) {
+            return doListAggs(query);
+        }
+        else if (hasGroupBy && hasFuncStmt) {
+            return doListBucketAggs(query);
+        }
+        else {
+            throw new RuntimeException("group by operation without func stmt is not supported, query is " + query);
+        }
+    }
+
+    private List<E> doListAggs(Query query) {
+        SearchSourceBuilder sourceBuilder = new SearchSourceBuilder()
+                .query(generateQueryBuilder(query.getCriteria()))
+                .from(0)
+                .size(0);
+        List<AggregationBuilder> aggsBuilderList = query.getSelectStmtList().stream()
+                .filter(FunctionStmt.class::isInstance)
+                .map(FunctionStmt.class::cast)
+                .map(SearchFunctionEnum::generateAggsBuilder)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
+        for (AggregationBuilder aggsBuilder : aggsBuilderList) {
+            sourceBuilder.aggregation(aggsBuilder);
+        }
+        SearchRequest request = new SearchRequest(entityMeta.getTable());
+        request.source(sourceBuilder);
+        try {
+            SearchResponse response = client.search(request, options);
+            Aggregations aggs = response.getAggregations();
+            Map<String, Object> resultMap = aggs.asList()
+                    .stream()
+                    .collect(Collectors.toMap(
+                            Aggregation::getName,
+                            agg -> NumericMetricsAggregation.SingleValue.class.cast(agg).value()));
+            E entity = JSON.parseObject(JSON.toJSONString(resultMap), entityMeta.getClassType());
+            return Collections.singletonList(entity);
+        } catch (IOException e) {
+            throw new RuntimeException("failed to list aggregation of type " + entityMeta.getClassType().getName() + " by " + query, e);
+        }
+    }
+
+    private List<E> doListBucketAggs(Query query) {
+        return Collections.emptyList();
+    }
+
+    private List<E> doListQuery(Query query) {
         SearchSourceBuilder sourceBuilder = new SearchSourceBuilder()
                 .query(generateQueryBuilder(query.getCriteria()))
                 .from(query.getOffset())
                 .size(Math.min(query.getLimit(), getDefaultMaxSize()));
-        for (Order order : query.getOrderList()) {
-            sourceBuilder.sort(generateSortBuilder(order));
+        List<Stmt> stmtList = query.getSelectStmtList()
+                .stream()
+                .filter(stmt -> !FunctionStmt.class.isInstance(stmt))
+                .collect(Collectors.toList());
+        if (CollectionUtils.isNotEmpty(stmtList)) {
+            List<String> includes = stmtList.stream()
+                    .map(Stmt::getField)
+                    .collect(Collectors.toList());
+            sourceBuilder.fetchSource(includes.toArray(ArrayUtils.EMPTY_STRING_ARRAY), ArrayUtils.EMPTY_STRING_ARRAY);
+        }
+        if (CollectionUtils.isNotEmpty(query.getOrderList())) {
+            for (Order order : query.getOrderList()) {
+                sourceBuilder.sort(generateSortBuilder(order));
+            }
         }
         SearchRequest request = new SearchRequest(entityMeta.getTable());
         request.source(sourceBuilder);
