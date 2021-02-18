@@ -205,6 +205,8 @@ public abstract class BaseSearchRepository<E> implements BaseReadOnlyRepository<
         Map<String, TermsAggregationBuilder> termsAggsBuilderMap = new HashMap<>();
         for (String groupBy : query.getGroupByList()) {
             TermsAggregationBuilder aggsBuilder = AggregationBuilders.terms(groupBy.replaceFirst("\\.keyword$", "")).field(groupBy);
+            // 注意桶聚合时，无法精确控制结果的总数量，只能控制每级聚合结果的数量
+            aggsBuilder.size(Math.min(query.getLimit(), getDefaultMaxSize()));
             termsAggsBuilderMap.put(groupBy, aggsBuilder);
             if (outterAggsBuilder == null) {
                 outterAggsBuilder = aggsBuilder;
