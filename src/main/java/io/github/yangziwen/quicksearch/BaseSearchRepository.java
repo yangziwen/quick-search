@@ -14,6 +14,7 @@ import javax.persistence.PersistenceException;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.elasticsearch.action.DocWriteRequest.OpType;
 import org.elasticsearch.action.DocWriteResponse.Result;
 import org.elasticsearch.action.bulk.BulkItemResponse;
 import org.elasticsearch.action.bulk.BulkRequest;
@@ -67,6 +68,10 @@ public abstract class BaseSearchRepository<E> extends BaseReadOnlySearchReposito
             return 0;
         }
 
+        int affectedRows = 0;
+
+        boolean needToBackfillId = entityMeta.getIdField() != null && entityMeta.getIdGeneratedValue() != null;
+
         for (int i = 0; i < entities.size(); i += batchSize) {
             List<E> sublist = entities.subList(i, Math.min(i + batchSize, entities.size()));
             List<BeanMap> beanMapList = sublist.stream()
@@ -78,10 +83,14 @@ public abstract class BaseSearchRepository<E> extends BaseReadOnlySearchReposito
             }
             try {
                 BulkResponse response = client.bulk(request, options);
-                if (entityMeta.getIdField() != null && entityMeta.getIdGeneratedValue() != null) {
-                    for (int j = 0; j < response.getItems().length; j++) {
-                        String idVal = response.getItems()[j].getId();
-                        beanMapList.get(j).put(entityMeta.getIdFieldName(), idVal);
+                for (int j = 0; j < response.getItems().length; j++) {
+                    BulkItemResponse item = response.getItems()[i];
+                    if (item.isFailed()) {
+                        continue;
+                    }
+                    affectedRows++;
+                    if (needToBackfillId) {
+                        beanMapList.get(j).put(entityMeta.getIdFieldName(), item.getId());
                     }
                 }
             } catch (IOException e) {
@@ -89,7 +98,7 @@ public abstract class BaseSearchRepository<E> extends BaseReadOnlySearchReposito
             }
         }
 
-        return entities.size();
+        return affectedRows;
     }
 
     private IndexRequest generateIndexRequest(Map<String, Object> beanMap) {
@@ -108,6 +117,7 @@ public abstract class BaseSearchRepository<E> extends BaseReadOnlySearchReposito
                 throw new IllegalStateException("failed to get id of entity[" + beanMap + "]");
             }
             request.id(String.valueOf(idVal));
+            request.opType(OpType.CREATE);
         }
 
         request.source(entityMap);
