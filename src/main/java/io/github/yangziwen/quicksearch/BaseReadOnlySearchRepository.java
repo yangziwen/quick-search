@@ -8,8 +8,8 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Map.Entry;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 import org.apache.commons.collections4.CollectionUtils;
@@ -19,8 +19,8 @@ import org.elasticsearch.action.get.GetRequest;
 import org.elasticsearch.action.get.GetResponse;
 import org.elasticsearch.action.get.MultiGetItemResponse;
 import org.elasticsearch.action.get.MultiGetRequest;
-import org.elasticsearch.action.get.MultiGetResponse;
 import org.elasticsearch.action.get.MultiGetRequest.Item;
+import org.elasticsearch.action.get.MultiGetResponse;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.client.RequestOptions;
@@ -54,12 +54,12 @@ import io.github.yangziwen.quickdao.core.Criterion;
 import io.github.yangziwen.quickdao.core.EntityMeta;
 import io.github.yangziwen.quickdao.core.FunctionStmt;
 import io.github.yangziwen.quickdao.core.Order;
+import io.github.yangziwen.quickdao.core.Order.Direction;
 import io.github.yangziwen.quickdao.core.Query;
 import io.github.yangziwen.quickdao.core.RepoKeys;
 import io.github.yangziwen.quickdao.core.Stmt;
 import io.github.yangziwen.quickdao.core.TypedCriteria;
 import io.github.yangziwen.quickdao.core.TypedQuery;
-import io.github.yangziwen.quickdao.core.Order.Direction;
 import io.github.yangziwen.quickdao.core.util.ReflectionUtil;
 import net.sf.cglib.beans.BeanMap;
 
@@ -340,7 +340,7 @@ public class BaseReadOnlySearchRepository<E> implements BaseReadOnlyRepository<E
         return SortBuilders.fieldSort(order.getName()).order(sortOrder);
     }
 
-    private QueryBuilder generateQueryBuilder(Criteria criteria) {
+    protected QueryBuilder generateQueryBuilder(Criteria criteria) {
         if (criteria.isEmpty()) {
             return QueryBuilders.matchAllQuery();
         }

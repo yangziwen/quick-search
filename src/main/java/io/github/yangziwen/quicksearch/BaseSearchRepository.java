@@ -2,15 +2,18 @@ package io.github.yangziwen.quicksearch;
 
 import java.io.IOException;
 import java.lang.reflect.Field;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.stream.Collectors;
 
 import javax.persistence.PersistenceException;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.elasticsearch.action.DocWriteResponse.Result;
 import org.elasticsearch.action.bulk.BulkItemResponse;
 import org.elasticsearch.action.bulk.BulkRequest;
@@ -23,7 +26,12 @@ import org.elasticsearch.action.update.UpdateRequest;
 import org.elasticsearch.action.update.UpdateResponse;
 import org.elasticsearch.client.RequestOptions;
 import org.elasticsearch.client.RestHighLevelClient;
+import org.elasticsearch.index.reindex.BulkByScrollResponse;
+import org.elasticsearch.index.reindex.UpdateByQueryRequest;
+import org.elasticsearch.script.Script;
+import org.elasticsearch.script.ScriptType;
 
+import io.github.yangziwen.quickdao.core.Criteria;
 import net.sf.cglib.beans.BeanMap;
 
 public abstract class BaseSearchRepository<E> extends BaseReadOnlySearchRepository<E> {
@@ -158,6 +166,35 @@ public abstract class BaseSearchRepository<E> extends BaseReadOnlySearchReposito
             throw new PersistenceException("faield to update entity of type " + entityMeta.getClassType().getName(), e);
         }
 
+    }
+
+    public int updateSelective(E entity, Criteria crieria) {
+
+        Map<String, Object> beanMap = createBeanMap(entity);
+
+        List<String> assignLineList = new ArrayList<>();
+
+        for (Entry<String, Object> entry : beanMap.entrySet()) {
+            if (entry.getValue() == null) {
+                continue;
+            }
+            assignLineList.add(String.format("ctx._source.%s = params.%s", entry.getKey(), entry.getKey()));
+        }
+
+        Script script = new Script(ScriptType.INLINE, "painless", StringUtils.join(assignLineList, ";"), beanMap);
+
+        UpdateByQueryRequest request = new UpdateByQueryRequest(entityMeta.getTable());
+
+        request.setQuery(generateQueryBuilder(crieria));
+
+        request.setScript(script);
+
+        try {
+            BulkByScrollResponse response = client.updateByQuery(request, options);
+            return Long.valueOf(response.getUpdated()).intValue();
+        } catch (IOException e) {
+            throw new PersistenceException("faield to update entity of type " + entityMeta.getClassType().getName(), e);
+        }
     }
 
     public int deleteById(Object id) {
