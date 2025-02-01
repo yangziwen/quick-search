@@ -32,10 +32,11 @@ import org.elasticsearch.index.reindex.UpdateByQueryRequest;
 import org.elasticsearch.script.Script;
 import org.elasticsearch.script.ScriptType;
 
+import io.github.yangziwen.quickdao.core.BaseRepository;
 import io.github.yangziwen.quickdao.core.Criteria;
 import net.sf.cglib.beans.BeanMap;
 
-public abstract class BaseSearchRepository<E> extends BaseReadOnlySearchRepository<E> {
+public abstract class BaseSearchRepository<E> extends BaseReadOnlySearchRepository<E> implements BaseRepository<E> {
 
     protected BaseSearchRepository(RestHighLevelClient client) {
         super(client);
@@ -45,6 +46,7 @@ public abstract class BaseSearchRepository<E> extends BaseReadOnlySearchReposito
         super(client, options);
     }
 
+    @Override
     public int insert(E entity) {
 
         Map<String, Object> beanMap = createBeanMap(entity);
@@ -62,6 +64,7 @@ public abstract class BaseSearchRepository<E> extends BaseReadOnlySearchReposito
         }
     }
 
+    @Override
     public int batchInsert(List<E> entities, int batchSize) {
 
         if (CollectionUtils.isEmpty(entities)) {
@@ -84,7 +87,7 @@ public abstract class BaseSearchRepository<E> extends BaseReadOnlySearchReposito
             try {
                 BulkResponse response = client.bulk(request, options);
                 for (int j = 0; j < response.getItems().length; j++) {
-                    BulkItemResponse item = response.getItems()[i];
+                    BulkItemResponse item = response.getItems()[j];
                     if (item.isFailed()) {
                         continue;
                     }
@@ -94,7 +97,7 @@ public abstract class BaseSearchRepository<E> extends BaseReadOnlySearchReposito
                     }
                 }
             } catch (IOException e) {
-                throw new PersistenceException("faield to persist entities of type " + entityMeta.getClassType().getName(), e);
+                throw new PersistenceException("failed to persist entities of type " + entityMeta.getClassType().getName(), e);
             }
         }
 
@@ -125,6 +128,7 @@ public abstract class BaseSearchRepository<E> extends BaseReadOnlySearchReposito
         return request;
     }
 
+    @Override
     public int update(E entity) {
 
         Map<String, Object> beanMap = createBeanMap(entity);
@@ -149,6 +153,7 @@ public abstract class BaseSearchRepository<E> extends BaseReadOnlySearchReposito
         }
     }
 
+    @Override
     public int updateSelective(E entity) {
 
         Map<String, Object> beanMap = createBeanMap(entity);
@@ -178,6 +183,7 @@ public abstract class BaseSearchRepository<E> extends BaseReadOnlySearchReposito
 
     }
 
+    @Override
     public int updateSelective(E entity, Criteria crieria) {
 
         Map<String, Object> beanMap = createBeanMap(entity);
@@ -207,6 +213,7 @@ public abstract class BaseSearchRepository<E> extends BaseReadOnlySearchReposito
         }
     }
 
+    @Override
     public int deleteById(Object id) {
 
         if (id == null) {
@@ -224,6 +231,7 @@ public abstract class BaseSearchRepository<E> extends BaseReadOnlySearchReposito
         }
     }
 
+    @Override
     public int deleteByIds(Collection<?> ids) {
         if (CollectionUtils.isEmpty(ids)) {
             return 0;
